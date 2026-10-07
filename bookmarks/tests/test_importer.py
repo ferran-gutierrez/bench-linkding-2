@@ -292,8 +292,9 @@ class ImporterTestCase(TestCase, BookmarkFactoryMixin, ImportTestMixin):
         import_html = self.render_html(tags=html_tags)
         import_netscape_html(import_html, self.get_or_create_test_user())
 
-        html_tags.append(BookmarkHtmlTag(href="https://example.com", tags="tag2, tag3"))
-        import_html = self.render_html(tags=html_tags)
+        import_html = self.render_html(
+            tags=[BookmarkHtmlTag(href="https://example.com", tags="tag2, tag3")]
+        )
         import_netscape_html(import_html, self.get_or_create_test_user())
 
         self.assertEqual(Bookmark.objects.count(), 1)
@@ -619,6 +620,14 @@ class ImporterTestCase(TestCase, BookmarkFactoryMixin, ImportTestMixin):
                 last_modified="22",
                 to_read=True,
             ),
+            BookmarkHtmlTag(
+                href="https://example.com",
+                title="Third identical href title",
+                description="Third identical href description",
+                add_date="3",
+                last_modified="33",
+                to_read=True,
+            ),
         ]
         import_html = self.render_html(tags=html_tags)
         result = import_netscape_html(import_html, user)
@@ -628,37 +637,42 @@ class ImporterTestCase(TestCase, BookmarkFactoryMixin, ImportTestMixin):
         self.assertEqual(bookmark.title, "First title")
         self.assertEqual(bookmark.description, "First description")
         self.assertEqual(bookmark.unread, False)
-        self.assertEqual(result.total, 2)
+        self.assertEqual(result.total, 3)
         self.assertEqual(result.success, 1)
-        self.assertEqual(result.failed, 1)
+        self.assertEqual(result.failed, 2)
 
     def test_REQ_4_skipped_in_file_duplicate_does_not_add_its_tags(self):
         user = self.get_or_create_test_user()
         html_tags = [
             BookmarkHtmlTag(href="https://example.com", tags="alpha"),
             BookmarkHtmlTag(href="https://example.com/", tags="beta"),
+            BookmarkHtmlTag(href="https://example.com", tags="gamma"),
         ]
         import_html = self.render_html(tags=html_tags)
-        import_netscape_html(import_html, user)
+        result = import_netscape_html(import_html, user)
 
         bookmark = Bookmark.objects.get(owner=user)
         tag_names = sorted(tag.name for tag in bookmark.tags.all())
         self.assertEqual(tag_names, ["alpha"])
+        self.assertEqual(result.total, 3)
+        self.assertEqual(result.success, 1)
+        self.assertEqual(result.failed, 2)
 
     def test_REQ_5_skipped_in_file_duplicates_count_as_failed_not_success(self):
         user = self.get_or_create_test_user()
         html_tags = [
             BookmarkHtmlTag(href="https://example.com/one"),
             BookmarkHtmlTag(href="https://example.com/two"),
+            BookmarkHtmlTag(href="https://example.com/one"),
             BookmarkHtmlTag(href="https://example.com/one/"),
             BookmarkHtmlTag(href="https://example.com/two/"),
         ]
         import_html = self.render_html(tags=html_tags)
         result = import_netscape_html(import_html, user)
 
-        self.assertEqual(result.total, 4)
+        self.assertEqual(result.total, 5)
         self.assertEqual(result.success, 2)
-        self.assertEqual(result.failed, 2)
+        self.assertEqual(result.failed, 3)
         self.assertEqual(Bookmark.objects.filter(owner=user).count(), 2)
 
     def test_REQ_6_in_file_deduplication_applies_across_import_batches(self):
@@ -752,14 +766,14 @@ class ImporterTestCase(TestCase, BookmarkFactoryMixin, ImportTestMixin):
         import_html = self.render_html(tags=html_tags)
         import_netscape_html(import_html, user)
 
-        html_tags = [
-            BookmarkHtmlTag(href="https://example.com", tags="tag1"),
-            BookmarkHtmlTag(href="https://example.com", tags="tag2, tag3"),
-        ]
-        import_html = self.render_html(tags=html_tags)
-        import_netscape_html(import_html, user)
+        import_html = self.render_html(
+            tags=[BookmarkHtmlTag(href="https://example.com", tags="tag2, tag3")]
+        )
+        result = import_netscape_html(import_html, user)
 
         self.assertEqual(Bookmark.objects.filter(owner=user).count(), 1)
+        self.assertEqual(result.success, 1)
+        self.assertEqual(result.failed, 0)
         self.assertEqual(
             Bookmark.objects.filter(owner=user).first().tags.all().count(), 3
         )

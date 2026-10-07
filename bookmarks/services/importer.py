@@ -77,8 +77,7 @@ def import_netscape_html(
     tag_cache = TagCache(user)
 
     # Split bookmarks to import into batches, to keep memory usage for bulk operations manageable
-    # Maps normalized URL to the href of its first occurrence in file order
-    seen_normalized_urls: dict[str, str] = {}
+    seen_normalized_urls: set[str] = set()
     batches = _get_batches(netscape_bookmarks, 200)
     for batch in batches:
         _import_batch(batch, user, options, tag_cache, result, seen_normalized_urls)
@@ -160,7 +159,7 @@ def _import_batch(
     options: ImportOptions,
     tag_cache: TagCache,
     result: ImportResult,
-    seen_normalized_urls: dict[str, str],
+    seen_normalized_urls: set[str],
 ):
     existing_by_normalized_url: dict[str, Bookmark] = {}
     existing_by_exact_url: dict[str, Bookmark] = {}
@@ -174,11 +173,10 @@ def _import_batch(
         result.total = result.total + 1
         normalized_url = normalize_url(netscape_bookmark.href)
         if normalized_url and normalized_url in seen_normalized_urls:
-            if netscape_bookmark.href != seen_normalized_urls[normalized_url]:
-                result.failed = result.failed + 1
-                continue
-        elif normalized_url:
-            seen_normalized_urls[normalized_url] = netscape_bookmark.href
+            result.failed = result.failed + 1
+            continue
+        if normalized_url:
+            seen_normalized_urls.add(normalized_url)
 
         try:
             bookmark = _find_existing_bookmark(
