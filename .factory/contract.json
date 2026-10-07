@@ -1,0 +1,23 @@
+{
+  "contractVersion": 1,
+  "language": "python",
+  "ci": { "runner": "ubuntu-24.04", "python": "3.13", "node": "20" },
+  "setup": [
+    { "name": "install", "command": "python -m pip install uv && uv sync && npm ci && mkdir -p data", "timeoutSec": 600 }
+  ],
+  "checks": [
+    { "name": "lint", "command": "uv run ruff check bookmarks", "timeoutSec": 120 },
+    { "name": "format", "command": "uv run ruff format --check bookmarks", "timeoutSec": 120 },
+    { "name": "unit", "command": "uv run pytest -n auto", "timeoutSec": 600 }
+  ],
+  "e2e": { "applies": false },
+  "paths": {
+    "specsDir": "specs",
+    "allowed": ["bookmarks/**", "docs/**", "specs/**", "pyproject.toml", "uv.lock", "package.json", "package-lock.json"],
+    "protected": ["bookmarks/tests_e2e/**"],
+    "tests": ["bookmarks/tests/**"],
+    "checkDefinitions": ["pytest.ini", "**/conftest.py"],
+    "sensitive": ["pyproject.toml", "uv.lock", "package.json", "package-lock.json", "bookmarks/settings/**", "bookmarks/migrations/**"]
+  },
+  "env": { "required": [] }
+}

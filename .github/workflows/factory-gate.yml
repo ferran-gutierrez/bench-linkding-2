@@ -1,0 +1,174 @@
+name: factory-gate
+run-name: factory-gate ${{ inputs.task }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Factory task id
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-gate-${{ inputs.task }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      runner: ${{ steps.contract.outputs.runner }}
+      node: ${{ steps.contract.outputs.node }}
+      python: ${{ steps.contract.outputs.python }}
+      setup: ${{ steps.contract.outputs.setup }}
+      checks: ${{ steps.contract.outputs.checks }}
+      e2e: ${{ steps.contract.outputs.e2e }}
+      e2e_setup: ${{ steps.contract.outputs.e2e_setup }}
+      e2e_command: ${{ steps.contract.outputs.e2e_command }}
+      e2e_timeout_sec: ${{ steps.contract.outputs.e2e_timeout_sec }}
+      e2e_minutes: ${{ steps.contract.outputs.e2e_minutes }}
+      video_glob: ${{ steps.contract.outputs.video_glob }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: contract
+        id: contract
+        run: |
+          node --input-type=module <<'SCRIPT'
+          import { appendFileSync, readFileSync } from "node:fs";
+          const contract = JSON.parse(readFileSync(".factory/contract.json", "utf8"));
+          const totalSec = (commands) => commands.reduce((sum, command) => sum + command.timeoutSec, 0);
+          const jobMinutes = (commands) => Math.ceil(totalSec(commands) / 60) + 2;
+          const setup = contract.setup.map(({ name, command, timeoutSec }) => ({ name, command, timeoutSec }));
+          const checks = contract.checks.map(({ name, command, timeoutSec }) => ({ name, command, timeoutSec, minutes: jobMinutes([...setup, { timeoutSec }]) }));
+          const e2e = contract.e2e;
+          const outputs = {
+            runner: contract.ci.runner,
+            node: contract.ci.node ?? "",
+            python: contract.ci.python ?? "",
+            setup: JSON.stringify(setup),
+            checks: JSON.stringify(checks),
+            e2e: String(e2e.applies === true),
+          };
+          if (e2e.applies === true) {
+            const e2eSetup = e2e.setup.map(({ name, command, timeoutSec }) => ({ name, command, timeoutSec }));
+            outputs.e2e_setup = JSON.stringify(e2eSetup);
+            outputs.e2e_command = e2e.command.command;
+            outputs.e2e_timeout_sec = String(e2e.command.timeoutSec);
+            outputs.e2e_minutes = String(jobMinutes([...setup, ...e2eSetup, e2e.command]));
+            outputs.video_glob = e2e.videoGlob;
+          }
+          const lines = Object.entries(outputs).map(([key, value]) => {
+            if (/[\r\n]/.test(value)) {
+              throw new Error(`contract value for ${key} spans several lines`);
+            }
+            return `${key}=${value}\n`;
+          });
+          appendFileSync(process.env.GITHUB_OUTPUT, lines.join(""));
+          SCRIPT
+
+  check:
+    name: check (${{ matrix.name }})
+    needs: plan
+    runs-on: ${{ needs.plan.outputs.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.checks) }}
+    timeout-minutes: ${{ matrix.minutes }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: node
+        if: needs.plan.outputs.node != ''
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ needs.plan.outputs.node }}
+      - name: python
+        if: needs.plan.outputs.python != ''
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: ${{ needs.plan.outputs.python }}
+      - name: setup
+        env:
+          COMMANDS: ${{ needs.plan.outputs.setup }}
+        run: |
+          count=$(jq 'length' <<<"$COMMANDS")
+          for index in $(seq 0 $((count - 1))); do
+            echo "::group::$(jq -r ".[$index].name" <<<"$COMMANDS")"
+            timeout "$(jq -r ".[$index].timeoutSec" <<<"$COMMANDS")s" bash -c "$(jq -r ".[$index].command" <<<"$COMMANDS")"
+            echo "::endgroup::"
+          done
+      - name: run
+        env:
+          COMMAND: ${{ matrix.command }}
+          TIMEOUT_SEC: ${{ matrix.timeoutSec }}
+        run: |
+          timeout "${TIMEOUT_SEC}s" bash -c "$COMMAND"
+
+  e2e:
+    name: e2e
+    needs: plan
+    if: needs.plan.outputs.e2e == 'true'
+    runs-on: ${{ needs.plan.outputs.runner }}
+    timeout-minutes: ${{ fromJSON(needs.plan.outputs.e2e_minutes) }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: node
+        if: needs.plan.outputs.node != ''
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ needs.plan.outputs.node }}
+      - name: python
+        if: needs.plan.outputs.python != ''
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: ${{ needs.plan.outputs.python }}
+      - name: setup
+        env:
+          COMMANDS: ${{ needs.plan.outputs.setup }}
+        run: |
+          count=$(jq 'length' <<<"$COMMANDS")
+          for index in $(seq 0 $((count - 1))); do
+            echo "::group::$(jq -r ".[$index].name" <<<"$COMMANDS")"
+            timeout "$(jq -r ".[$index].timeoutSec" <<<"$COMMANDS")s" bash -c "$(jq -r ".[$index].command" <<<"$COMMANDS")"
+            echo "::endgroup::"
+          done
+      - name: e2e-setup
+        env:
+          COMMANDS: ${{ needs.plan.outputs.e2e_setup }}
+        run: |
+          count=$(jq 'length' <<<"$COMMANDS")
+          for index in $(seq 0 $((count - 1))); do
+            echo "::group::$(jq -r ".[$index].name" <<<"$COMMANDS")"
+            timeout "$(jq -r ".[$index].timeoutSec" <<<"$COMMANDS")s" bash -c "$(jq -r ".[$index].command" <<<"$COMMANDS")"
+            echo "::endgroup::"
+          done
+      - name: run
+        env:
+          COMMAND: ${{ needs.plan.outputs.e2e_command }}
+          TIMEOUT_SEC: ${{ needs.plan.outputs.e2e_timeout_sec }}
+        run: |
+          timeout "${TIMEOUT_SEC}s" bash -c "$COMMAND"
+      - name: upload
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: factory-e2e
+          path: |
+            ${{ needs.plan.outputs.video_glob }}
+            playwright-report/
+          if-no-files-found: warn
