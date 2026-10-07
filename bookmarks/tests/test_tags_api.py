@@ -93,7 +93,9 @@ class TagsApiTestCase(LinkdingApiTestCase, BookmarkFactoryMixin):
         self.get(delete_url, expected_status_code=status.HTTP_404_NOT_FOUND)
 
     def test_REQ_8_api_docs_document_tag_delete(self):
-        api_doc_path = Path(__file__).resolve().parents[2] / "docs/src/content/docs/api.md"
+        api_doc_path = (
+            Path(__file__).resolve().parents[2] / "docs/src/content/docs/api.md"
+        )
         content = api_doc_path.read_text(encoding="utf-8")
 
         tags_section_start = content.index("### Tags")
