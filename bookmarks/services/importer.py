@@ -78,8 +78,9 @@ def import_netscape_html(
 
     # Split bookmarks to import into batches, to keep memory usage for bulk operations manageable
     batches = _get_batches(netscape_bookmarks, 200)
+    seen_normalized_urls: dict[str, str] = {}
     for batch in batches:
-        _import_batch(batch, user, options, tag_cache, result)
+        _import_batch(batch, user, options, tag_cache, result, seen_normalized_urls)
 
     # Load favicons for newly imported bookmarks
     tasks.schedule_bookmarks_without_favicons(user)
@@ -135,27 +136,28 @@ def _import_batch(
     options: ImportOptions,
     tag_cache: TagCache,
     result: ImportResult,
+    seen_normalized_urls: dict[str, str],
 ):
-    # Query existing bookmarks
     batch_urls = [bookmark.href for bookmark in netscape_bookmarks]
-    existing_bookmarks = Bookmark.objects.filter(owner=user, url__in=batch_urls)
 
     # Create or update bookmarks from parsed Netscape bookmarks
     bookmarks_to_create = []
     bookmarks_to_update = []
+    bookmarks_for_tags: list[NetscapeBookmark] = []
 
     for netscape_bookmark in netscape_bookmarks:
         result.total = result.total + 1
+
+        normalized_url = normalize_url(netscape_bookmark.href)
+        first_href = seen_normalized_urls.get(normalized_url)
+        if first_href is not None and first_href != netscape_bookmark.href:
+            result.failed = result.failed + 1
+            continue
+        if first_href is None:
+            seen_normalized_urls[normalized_url] = netscape_bookmark.href
+
         try:
-            # Lookup existing bookmark by URL, or create new bookmark if there is no bookmark for that URL yet
-            bookmark = next(
-                (
-                    bookmark
-                    for bookmark in existing_bookmarks
-                    if bookmark.url == netscape_bookmark.href
-                ),
-                None,
-            )
+            bookmark = Bookmark.query_existing(user, netscape_bookmark.href).first()
             if not bookmark:
                 bookmark = Bookmark(owner=user)
                 is_update = False
@@ -172,6 +174,7 @@ def _import_batch(
             else:
                 bookmarks_to_create.append(bookmark)
 
+            bookmarks_for_tags.append(netscape_bookmark)
             result.success = result.success + 1
         except Exception:
             shortened_bookmark_tag_str = str(netscape_bookmark)[:100] + "..."
@@ -205,7 +208,7 @@ def _import_batch(
     BookmarkToTagRelationShip = Bookmark.tags.through
     relationships = []
 
-    for netscape_bookmark in netscape_bookmarks:
+    for netscape_bookmark in bookmarks_for_tags:
         # Lookup bookmark by URL again
         bookmark = next(
             (
