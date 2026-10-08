@@ -287,7 +287,9 @@ class ImporterTestCase(TestCase, BookmarkFactoryMixin, ImportTestMixin):
         import_html = self.render_html(tags=html_tags)
         import_netscape_html(import_html, self.get_or_create_test_user())
 
-        html_tags.append(BookmarkHtmlTag(href="https://example.com", tags="tag2, tag3"))
+        html_tags = [
+            BookmarkHtmlTag(href="https://example.com", tags="tag2, tag3"),
+        ]
         import_html = self.render_html(tags=html_tags)
         import_netscape_html(import_html, self.get_or_create_test_user())
 
@@ -620,6 +622,33 @@ class ImporterTestCase(TestCase, BookmarkFactoryMixin, ImportTestMixin):
         self.assertEqual(bookmark.description, "First description")
         self.assertEqual(bookmark.tag_names, ["first-tag"])
 
+        html_tags = [
+            BookmarkHtmlTag(
+                href="https://example.com/dup",
+                title="First identical",
+                description="First identical description",
+                tags="identical-first-tag",
+            ),
+            BookmarkHtmlTag(
+                href="https://example.com/dup",
+                title="Second identical",
+                description="Second identical description",
+                tags="identical-second-tag",
+            ),
+        ]
+        import_netscape_html(self.render_html(tags=html_tags), user)
+
+        self.assertEqual(
+            Bookmark.objects.filter(owner=user, url="https://example.com/dup").count(),
+            1,
+        )
+        identical_bookmark = Bookmark.objects.get(
+            owner=user, url="https://example.com/dup"
+        )
+        self.assertEqual(identical_bookmark.title, "First identical")
+        self.assertEqual(identical_bookmark.description, "First identical description")
+        self.assertEqual(identical_bookmark.tag_names, ["identical-first-tag"])
+
     def test_REQ_4_skipped_in_file_duplicate_increments_failed_not_success(self):
         user = self.get_or_create_test_user()
         html_tags = [
@@ -631,6 +660,20 @@ class ImporterTestCase(TestCase, BookmarkFactoryMixin, ImportTestMixin):
         self.assertEqual(result.total, 2)
         self.assertEqual(result.success, 1)
         self.assertEqual(result.failed, 1)
+
+        html_tags = [
+            BookmarkHtmlTag(href="https://example.com/dup", title="First"),
+            BookmarkHtmlTag(href="https://example.com/dup", title="Second"),
+        ]
+        result = import_netscape_html(self.render_html(tags=html_tags), user)
+
+        self.assertEqual(result.total, 2)
+        self.assertEqual(result.success, 1)
+        self.assertEqual(result.failed, 1)
+        self.assertEqual(
+            Bookmark.objects.filter(owner=user, url="https://example.com/dup").count(),
+            1,
+        )
 
     def test_REQ_5_four_entries_two_in_file_dupes_import_counts(self):
         user = self.get_or_create_test_user()

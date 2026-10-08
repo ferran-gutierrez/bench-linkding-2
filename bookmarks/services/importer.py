@@ -149,12 +149,10 @@ def _import_batch(
         result.total = result.total + 1
 
         normalized_url = normalize_url(netscape_bookmark.href)
-        first_href = seen_normalized_urls.get(normalized_url)
-        if first_href is not None and first_href != netscape_bookmark.href:
+        if normalized_url in seen_normalized_urls:
             result.failed = result.failed + 1
             continue
-        if first_href is None:
-            seen_normalized_urls[normalized_url] = netscape_bookmark.href
+        seen_normalized_urls[normalized_url] = netscape_bookmark.href
 
         try:
             bookmark = Bookmark.query_existing(user, netscape_bookmark.href).first()
